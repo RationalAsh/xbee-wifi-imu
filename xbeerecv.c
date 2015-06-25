@@ -63,16 +63,7 @@ int main(int argc, char** argv)
     timeout.tv_sec = TIMEOUT;
     timeout.tv_usec = 0;
 
-
-    //Connect to the XBees using TCP
-    //xbsocks[0] = establishConnection(XB0IP, XBPORT);
-    //xbsocks[1] = establishConnection(XB1IP, XBPORT);
-    //xbsocks[2] = establishConnection(XB2IP, XBPORT);
-    //xbsocks[3] = establishConnection(XB3IP, XBPORT);
-    //xbsocks[4] = establishConnection(XB4IP, XBPORT);
-    //xbsocks[5] = establishConnection(XB5IP, XBPORT);
-    //xbsocks[6] = establishConnection(XB6IP, XBPORT);
-
+    //Connect to all the xbees
     for(i=0;i<SENSORS;i++)
     {
 	if(sensormask[i])
@@ -82,12 +73,12 @@ int main(int argc, char** argv)
     //Set up stdin with select
     int fd_stdin = fileno(stdin);
 
-    //Clearing the sensor readings
-    
+    //Clearing the sensor readings    
     for(i=0;i<SENSORS;i++)
 	for(j=0;j<DOF;j++)
 	    sensor_readings[i][j] = 0;
 
+    //Send the start character to all the xbees
     for(i=0;i<SENSORS;i++)
     {
 	if(sensormask[i])
@@ -99,9 +90,6 @@ int main(int argc, char** argv)
     {
 	//Setting up struct for TCP
 	FD_ZERO(&master);
-	//FD_SET(xbsocks[0], &master);
-	//FD_SET(xbsocks[1], &master);
-
 	for(i=0;i<SENSORS;i++)
 	{
 	    if(sensormask[i])
