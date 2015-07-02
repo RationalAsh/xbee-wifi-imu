@@ -10,7 +10,22 @@ int establishConnection(char* bot_address, int bot_portno)
 {
     struct sockaddr_in serv_addr;
     struct hostent *server;
+
+    struct timeval con_timeout;      
+    con_timeout.tv_sec = 0;
+    con_timeout.tv_usec = 100000;
+
     int sockfd = socket(AF_INET , SOCK_STREAM , 0);
+
+    //Set timeout for socket
+    if (setsockopt (sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&con_timeout,
+                sizeof(con_timeout)) < 0)
+        error("setsockopt failed\n");
+
+    if (setsockopt (sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&con_timeout,
+                sizeof(con_timeout)) < 0)
+        error("setsockopt failed\n");
+
     if (sockfd== -1)
     {
         printf("Could not create socket");
@@ -23,9 +38,10 @@ int establishConnection(char* bot_address, int bot_portno)
     if (connect(sockfd , (struct sockaddr *)&serv_addr , sizeof(serv_addr)) < 0)
     {
         puts("connect error");
+	close(sockfd);
         return 1;
     }
-        printf("Connected to %s on port %d\n",bot_address,bot_portno); 
+    printf("Connected to %s on port %d\n",bot_address,bot_portno); 
 
     return sockfd;
 }

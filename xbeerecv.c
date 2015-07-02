@@ -1,7 +1,17 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <math.h>
 #include "wifi.c"
 
+//Color codes for the terminal
+#define KNRM  "\x1B[0m"
+#define KRED  "\x1B[31m"
+#define KGRN  "\x1B[32m"
+#define KYEL  "\x1B[33m"
+#define KBLU  "\x1B[34m"
+#define KMAG  "\x1B[35m"
+#define KCYN  "\x1B[36m"
+#define KWHT  "\x1B[37m"
 
 //For XBEE-1
 #define XB0IP "192.168.1.150"
@@ -17,108 +27,91 @@
 #define MSGBUFSIZE 1024
 #define DOF 3
 #define SENSORS 7
-#define TIMEOUT 1 //Seconds
+#define TIMEOUT 2 //Seconds
+#define ID_OFFSET 2
+#define BASE_IP "192.168.253."
 
-char msg1[MSGBUFSIZE];
-char msg2[MSGBUFSIZE];
-char reply[MSGBUFSIZE];
-char reply1[MSGBUFSIZE];
-char reply2[MSGBUFSIZE];
+
 double sensor_readings[SENSORS][DOF];
 double quaternions[SENSORS][4];
-int sensormask[SENSORS] = {0,1,1,0,0,0,0};
+int sensormask[SENSORS] = {0,0,0,0,0,0,0};
 
 //Structs for IO waiting
 fd_set master;
-fd_set keypress;
 
-void read_data(int *sockets);
-void update_ypr(char *data_str, int sensor_number);
-void print_readings();
-void print_quaternions();
-void update_quaternion(int sensor_number);
-void connect_xbees();
+int find_sensors(char* base_ip, int xbsocks[SENSORS]);
+void send_start_signal(int xbsocks[SENSORS], char *c);
+int read_data(int xbsocks[SENSORS], double readings[SENSORS][DOF]);
+void update_ypr(char *data_str, int sensor_number, double readings[SENSORS][DOF]);
+void print_readings(double readings[SENSORS][DOF]);
+void print_quaternions(double quats[SENSORS][4]);
+void update_quaternion(double readings[SENSORS][DOF], 
+		       int sensor_number, double quats[SENSORS][4]);
+void calc_quaternions(double readings[SENSORS][DOF], double quats[SENSORS][4]);
 
 int main(int argc, char** argv)
 {
-    int i, j;
     int xbsocks[SENSORS];
-    char **xbips;
+    int i;
 
-    //Array of IPS
-    xbips = (char**)malloc(SENSORS*sizeof(char*));
+    //Clearing the socket array
     for(i=0;i<SENSORS;i++)
-	xbips[i] = (char *)malloc(16*sizeof(char));
+	xbsocks[i] = -1;
 
-    xbips[0] = XB0IP;
-    xbips[1] = XB1IP;
-    xbips[2] = XB2IP;
-    xbips[3] = XB3IP;
-    xbips[4] = XB4IP;
-    xbips[5] = XB5IP;
-    xbips[6] = XB6IP;	    
-    
-    //Value for the timeout
-    struct timeval timeout;
-    timeout.tv_sec = TIMEOUT;
-    timeout.tv_usec = 0;
+    /*
+      Scan all the IP addresses from BASE_IP
+      Find and connect to the sensors and store
+      the scoket descriptors in an array
+    */
+    int num_found = find_sensors("172.23.39.", xbsocks);
 
-    //Connect to all the xbees
-    for(i=0;i<SENSORS;i++)
-    {
-	if(sensormask[i])
-	    xbsocks[i] = establishConnection(xbips[i], XBPORT);
-    }
+    /*
+      Now that the connections are established to 
+      all the detected Xbees, send a start character
+      to each of them so that they start transmitting
+      the readings
+    */
+    send_start_signal(xbsocks, "aaa");
 
-    //Set up stdin with select
-    int fd_stdin = fileno(stdin);
-
-    //Clearing the sensor readings    
-    for(i=0;i<SENSORS;i++)
-	for(j=0;j<DOF;j++)
-	    sensor_readings[i][j] = 0;
-
-    //Send the start character to all the xbees
-    for(i=0;i<SENSORS;i++)
-    {
-	if(sensormask[i])
-	    tcpWrite(xbsocks[i], "aaa");
-    }
-    
-
+    /*
+      Now the xbees that are online are transmitting the
+      yaw, pitch and roll readings. Read this data and 
+      store them in an array and keep looping.
+    */
     while(1)
     {
-	//Setting up struct for TCP
-	FD_ZERO(&master);
-	for(i=0;i<SENSORS;i++)
-	{
-	    if(sensormask[i])
-		FD_SET(xbsocks[i], &master);
-	}
+	//Read data into sensor_readings array
+	int num = read_data(xbsocks, sensor_readings);
 
-	//Wait for incoming data to be available
-	int num_ready = select(FD_SETSIZE, &master, NULL, NULL, &timeout);
-
-	//If data is received before timeout
-	if(num_ready > 0)
+	//If there's any data
+	if(num)
 	{
-	    //Reads the data, converts it to quaternions and puts it 
-	    //in the quaternions[SENSORS][4] array.
-	    read_data(xbsocks);
-	    //print_readings();
-	    print_quaternions();
+	    print_readings(sensor_readings);
+	    //Convert to quaternions and store in quaternion array
+	    calc_quaternions(sensor_readings, quaternions);
+	    print_quaternions(quaternions);
 	}
     }
-
+    
 
     return 0;
 }
 
-
-//Another helper function
-void update_quaternion(int sensor_number)
+void calc_quaternions(double readings[SENSORS][DOF], double quats[SENSORS][4])
 {
-    double *ypr = sensor_readings[sensor_number];
+    int i;
+
+    for(i=0;i<SENSORS;i++)
+    {
+	update_quaternion(readings, i, quats);
+    }
+} 
+
+//A helper function
+void update_quaternion(double readings[SENSORS][DOF], 
+		       int sensor_number, double quats[SENSORS][4])
+{
+    double *ypr = readings[sensor_number];
     
     double c1 = cos(ypr[0]/2.0);
     double c2 = cos(ypr[1]/2.0);
@@ -132,27 +125,13 @@ void update_quaternion(int sensor_number)
     double y = s1*c2*c3 + c1*s2*s3;
     double z = c1*s2*c3 - s1*c2*s3;
 
-    quaternions[sensor_number][0] = w;
-    quaternions[sensor_number][1] = x;
-    quaternions[sensor_number][2] = y;
-    quaternions[sensor_number][3] = z;    
+    quats[sensor_number][0] = w;
+    quats[sensor_number][1] = x;
+    quats[sensor_number][2] = y;
+    quats[sensor_number][3] = z;    
 }
 
-//Helper function
-void print_readings()
-{
-    int i, j;
-    for(i=0;i<SENSORS;i++)
-    {
-	for(j=0;j<DOF;j++)
-	{
-	    printf("%.2f ", sensor_readings[i][j]);
-	}
-	printf("\n");
-    }
-}
-
-void print_quaternions()
+void print_quaternions(double quats[SENSORS][4])
 {
     int i, j;
 
@@ -160,16 +139,28 @@ void print_quaternions()
 
     for(i=0;i<SENSORS;i++)
     {
-	for(j=0;j<DOF+1;j++)
+	for(j=0;j<4;j++)
 	{
-	    printf("%.2f ", quaternions[i][j]);
+	    printf("%.2f ", quats[i][j]);
 	}
 	printf("\n");
     }
 }
 
-//Helper function
-void update_ypr(char *data_str, int sensor_number)
+void print_readings(double readings[SENSORS][DOF])
+{
+    int i, j;
+    for(i=0;i<SENSORS;i++)
+    {
+	for(j=0;j<DOF;j++)
+	{
+	    printf("%.2f ", readings[i][j]);
+	}
+	printf("\n");
+    }
+}
+
+void update_ypr(char *data_str, int sensor_number, double readings[SENSORS][DOF])
 {
     char *token;
 
@@ -179,7 +170,7 @@ void update_ypr(char *data_str, int sensor_number)
     while ((token = strsep(&data_str, ",")) != NULL)
     {
 	double temp = atof(token);
-	sensor_readings[sensor_number][i] = temp;
+	readings[sensor_number][i] = temp;
 	//printf("%s\n", token);
 	i++;
 	//if(i>=3)
@@ -187,20 +178,111 @@ void update_ypr(char *data_str, int sensor_number)
     }
 }
 
-void read_data(int *sockets)
+int read_data(int xbsocks[SENSORS], double readings[SENSORS][DOF])
 {
-    int i = 0;
+    int i;
+    char reply[MSGBUFSIZE];
 
-    for(i=0; i<SENSORS; i++)
+    //Value for the timeout for reading
+    struct timeval timeout;
+    timeout.tv_sec = TIMEOUT;
+    timeout.tv_usec = 0;
+
+    FD_ZERO(&master);
+    for(i=0;i<SENSORS;i++)
     {
-	if(sensormask[i]){
-	if((FD_ISSET(sockets[i], &master)))
+	if(xbsocks[i] != -1)
 	{
-	    tcpRead(sockets[i], reply);
-	    printf("Xbee%d: %s\n", i, reply);
-	    char *temp = strdup(reply);
-	    update_ypr(temp, i);
-	    update_quaternion(i);
-	}}
+	    FD_SET(xbsocks[i], &master);
+	}
     }
+
+    int num_ready = select(FD_SETSIZE, &master, NULL, NULL, &timeout);
+    if(num_ready > 0)
+    {
+	for(i=0;i<SENSORS;i++)
+	{
+	    if(xbsocks[i] != -1)
+	    {
+		if(FD_ISSET(xbsocks[i], &master))
+		{
+		    tcpRead(xbsocks[i], reply);
+		    printf("Xbee%d: %s\n", i, reply);
+		    char *temp = strdup(reply);
+		    update_ypr(temp, i, readings);
+		}
+	    }
+	}
+    }
+
+    return num_ready;
+}
+	    
+	    
+
+void send_start_signal(int xbsocks[SENSORS], char *c)
+{
+    int i;
+    
+    for(i=0;i<SENSORS;i++)
+    {
+	if(xbsocks[i] != -1)
+	{
+	    tcpWrite(xbsocks[i], c);
+	}
+    }
+}
+
+int find_sensors(char* base_ip, int xbsocks[SENSORS])
+{
+    int i;
+    char tmp[5];
+    char tmpip[16];
+    char reply[32];
+    fd_set readlist;
+    int num_detected = 0;
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 100000;
+
+    for(i=0;i<256;i++)
+    {
+	sprintf(tmp, "%d", i);
+	sprintf(tmpip, "%s%s", base_ip, tmp);
+	printf("Trying IP: %s\n", tmpip);
+	int tmpfd = establishConnection(tmpip, XBPORT);
+	if(tmpfd != 1) //Connected
+	{
+	    printf("Connection..\n");
+	    FD_ZERO(&readlist);
+	    FD_SET(tmpfd, &readlist);
+
+	    tcpWrite(tmpfd, "???");
+	    //Wait for 2 seconds for incoming data
+	    select(FD_SETSIZE, &readlist, NULL, NULL, &timeout);
+	    
+	    tcpRead(tmpfd, reply);
+	    //printf("Got: %s", reply);
+
+	    if((reply[0] == 'x')&&(reply[1] == 'b'))
+	    {
+		printf("Found and xbee: %s", reply);
+		int sensor_number = reply[2] - '0';
+		xbsocks[sensor_number] = tmpfd;
+		num_detected++;
+	    }
+	}
+    }
+
+    for(i=0;i<SENSORS;i++)
+    {
+	printf("%sXbee %d: ", KNRM, i);
+	if(xbsocks[i] == -1)
+	    printf("%sOffline\n", KRED);
+	else
+	    printf("%sOnline\n", KGRN);
+    }
+    printf("%s",KNRM);
+
+    return num_detected;
 }
