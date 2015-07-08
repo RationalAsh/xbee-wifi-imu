@@ -7,7 +7,8 @@
 #include <netinet/in.h>
 #include <netdb.h> 
 #include <arpa/inet.h>
-#define BUFFER_SIZE 30
+#include <ncurses.h>
+#define BUFFER_SIZE 40
 
 void error(const char *msg)
 { 
@@ -22,7 +23,7 @@ int establishConnection(char* bot_address, int bot_portno)
 
     struct timeval con_timeout;      
     con_timeout.tv_sec = 0;
-    con_timeout.tv_usec = 500000;
+    con_timeout.tv_usec = 800000;
 
     int sockfd = socket(AF_INET , SOCK_STREAM , 0);
 
@@ -46,7 +47,7 @@ int establishConnection(char* bot_address, int bot_portno)
     //Connect to remote server
     if (connect(sockfd , (struct sockaddr *)&serv_addr , sizeof(serv_addr)) < 0)
     {
-        puts("connect error");
+        //puts("connect error");
 	close(sockfd);
         return 1;
     }
