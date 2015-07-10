@@ -1,3 +1,6 @@
+#ifndef WIFILIB_H
+#define WIFILIB_H
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -104,3 +107,4 @@ void close_socket(int bot1_sockfd)
 /*	return 0;*/
 /*}*/
 
+#endif /* wifilib.h */
